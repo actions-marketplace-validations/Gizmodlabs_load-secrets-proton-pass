@@ -196,6 +196,10 @@ brew install act
 act push -W tests/test-workflow.yml
 ```
 
+## Author
+
+Created by [Martin](https://github.com/thisguymartin) at [Gizmodlabs LLC](https://github.com/gizmodlabs).
+
 ## License
 
 MIT - see [LICENSE](LICENSE)
