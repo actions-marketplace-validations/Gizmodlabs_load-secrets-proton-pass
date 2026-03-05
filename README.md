@@ -120,15 +120,32 @@ The action uses `pass-cli login --interactive`, which reads credentials from env
 
 If 2FA is required, pass the TOTP code via the `totp` input. See [PLAN.md](PLAN.md) for TOTP workarounds.
 
-## Local Testing
+## Testing
 
-Test locally with [nektos/act](https://github.com/nektos/act):
+### With Dagger (Recommended)
+
+[Dagger](https://dagger.io/) runs the test suite inside containers — no local dependencies beyond the Dagger CLI required.
 
 ```bash
-# Run tests with mock CLI
+# Install Dagger
+brew install dagger/tap/dagger
+
+# Run the full test suite
+dagger call test
+
+# Run individual checks
+dagger call test-resolve-secrets   # Test secret resolution only
+dagger call test-cleanup           # Test cleanup script
+dagger call lint                   # Run shellcheck on all scripts
+```
+
+### Without Dagger
+
+```bash
+# Run tests directly (requires bash, coreutils, xxd)
 bash tests/run-local-tests.sh
 
-# Run full workflow with act
+# Run full workflow with nektos/act
 act push -W tests/test-workflow.yml
 ```
 
