@@ -34,15 +34,17 @@ case "$1" in
     ;;
   inject)
     # Simulate template injection: replace {{ pass://... }} with mock values
-    TEMPLATE="$2"
+    TEMPLATE=""
     OUTPUT=""
+    shift  # consume "inject"
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        -i) TEMPLATE="$2"; shift ;;
         -o) OUTPUT="$2"; shift ;;
       esac
       shift
     done
-    if [[ -n "$OUTPUT" && -f "$TEMPLATE" ]]; then
+    if [[ -n "$OUTPUT" && -n "$TEMPLATE" && -f "$TEMPLATE" ]]; then
       sed -E 's/\{\{ *pass:\/\/[^}]+ *\}\}/mock-injected-value/g' "$TEMPLATE" > "$OUTPUT"
     fi
     exit 0

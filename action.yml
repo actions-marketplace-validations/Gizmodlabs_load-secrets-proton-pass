@@ -75,6 +75,7 @@ runs:
       shell: bash
       run: ${{ github.action_path }}/scripts/resolve-secrets.sh
       env:
+        PROTON_PASS_KEY_PROVIDER: fs
         EXPORT_ENV: ${{ inputs.export-env }}
         MASK_VALUES: ${{ inputs.mask-values }}
 
@@ -83,6 +84,7 @@ runs:
       shell: bash
       run: ${{ github.action_path }}/scripts/inject-template.sh
       env:
+        PROTON_PASS_KEY_PROVIDER: fs
         ENV_TEMPLATE: ${{ inputs.env-template }}
         MASK_VALUES: ${{ inputs.mask-values }}
 

@@ -1,0 +1,28 @@
+# Basic usage: load secrets as step outputs
+name: Deploy with Proton Pass Secrets
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load secrets
+        id: secrets
+        uses: gizmodlabs/load-secrets-proton-pass@v1
+        with:
+          account-email: ${{ secrets.PROTON_ACCOUNT_EMAIL }}
+          proton-password: ${{ secrets.PROTON_PASS_PASSWORD }}
+        env:
+          DB_PASSWORD: "pass://Production/Database/password"
+          API_KEY: "pass://Production/API/key"
+
+      - name: Use secrets
+        run: echo "Secrets loaded successfully"
+        env:
+          DB_PASSWORD: ${{ steps.secrets.outputs.DB_PASSWORD }}
+          API_KEY: ${{ steps.secrets.outputs.API_KEY }}

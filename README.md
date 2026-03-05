@@ -24,6 +24,36 @@ Works like [1Password's load-secrets-action](https://github.com/1password/load-s
     STRIPE_KEY: ${{ steps.secrets.outputs.STRIPE_KEY }}
 ```
 
+## Setup
+
+### 1. Proton Pass Account
+
+You need a [Proton Pass Plus+](https://proton.me/pass) subscription (required for CLI access).
+
+**Recommended:** Create a dedicated Proton account for CI/CD without 2FA enabled. Share only the necessary vaults with it via Proton Pass vault sharing. See [`examples/dedicated-ci-account.yml`](examples/dedicated-ci-account.yml) for details.
+
+### 2. GitHub Secrets
+
+Add these secrets to your repository (Settings > Secrets and variables > Actions):
+
+| GitHub Secret | Required | Description |
+|---|---|---|
+| `PROTON_ACCOUNT_EMAIL` | Yes | Proton account email address |
+| `PROTON_PASS_PASSWORD` | Yes | Proton account password |
+| `PROTON_TOTP_SEED` | Only if 2FA enabled | TOTP seed for generating 2FA codes at runtime |
+
+### 3. Secret References
+
+Define secrets as environment variables on the action step using `pass://` URIs:
+
+```
+pass://vault-name/item-name/field-name
+```
+
+- **vault-name**: Name of the Proton Pass vault
+- **item-name**: Name of the item in the vault
+- **field-name**: Name of the field (e.g., `password`, `username`, custom fields)
+
 ## Usage
 
 ### Step Outputs (Default)
@@ -84,6 +114,13 @@ DB_PASSWORD={{ pass://Production/Database/password }}
 REDIS_URL={{ pass://Production/Redis/url }}
 ```
 
+Output (`.env.production`):
+```
+DB_HOST=db.example.com
+DB_PASSWORD=actual-resolved-password
+REDIS_URL=redis://actual-url:6379
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -97,20 +134,18 @@ REDIS_URL={{ pass://Production/Redis/url }}
 | `pass-cli-version` | No | `latest` | Proton Pass CLI version to install |
 | `mask-values` | No | `true` | Mask resolved values in workflow logs |
 
-## Secret URI Format
+## Examples
 
-```
-pass://vault-name/item-name/field-name
-```
+See the [`examples/`](examples/) directory for complete workflow files:
 
-- **vault-name**: Name of the Proton Pass vault
-- **item-name**: Name of the item in the vault
-- **field-name**: Name of the field (e.g., `password`, `username`, custom fields)
-
-## Requirements
-
-- A [Proton Pass Plus+](https://proton.me/pass) subscription (required for CLI access)
-- The [Proton Pass CLI](https://proton.me/support/pass-cli) (`pass-cli`) — installed automatically by this action
+| Example | Description |
+|---------|-------------|
+| [`basic-usage.yml`](examples/basic-usage.yml) | Load secrets as step outputs |
+| [`export-env.yml`](examples/export-env.yml) | Export secrets as env vars for all steps |
+| [`env-template.yml`](examples/env-template.yml) | Inject secrets into a `.env` template file |
+| [`multi-service.yml`](examples/multi-service.yml) | Load secrets for multiple services at once |
+| [`dedicated-ci-account.yml`](examples/dedicated-ci-account.yml) | Recommended CI/CD setup with a dedicated account |
+| [`with-totp.yml`](examples/with-totp.yml) | Generate and use TOTP codes for accounts with 2FA |
 
 ## Authentication
 
@@ -118,13 +153,25 @@ The action uses `pass-cli login --interactive`, which reads credentials from env
 
 **Recommended setup**: Create a dedicated Proton account for CI/CD without 2FA enabled, and share only the necessary vaults with it via Proton Pass vault sharing.
 
-If 2FA is required, pass the TOTP code via the `totp` input. See [PLAN.md](PLAN.md) for TOTP workarounds.
+If 2FA is required, generate the TOTP code at runtime from the seed. See [`examples/with-totp.yml`](examples/with-totp.yml) and [PLAN.md](PLAN.md) for details.
+
+## Requirements
+
+- A [Proton Pass Plus+](https://proton.me/pass) subscription (required for CLI access)
+- The [Proton Pass CLI](https://proton.me/support/pass-cli) (`pass-cli`) -- installed automatically by this action
 
 ## Testing
 
-### With Dagger (Recommended)
+### Local Tests
 
-[Dagger](https://dagger.io/) runs the test suite inside containers — no local dependencies beyond the Dagger CLI required.
+```bash
+# Run the test suite directly (requires bash, coreutils, xxd)
+bash tests/run-local-tests.sh
+```
+
+### With Dagger (Containerized)
+
+[Dagger](https://dagger.io/) runs the test suite inside containers -- no local dependencies beyond the Dagger CLI required.
 
 ```bash
 # Install Dagger
@@ -139,13 +186,13 @@ dagger call test-cleanup           # Test cleanup script
 dagger call lint                   # Run shellcheck on all scripts
 ```
 
-### Without Dagger
+### With nektos/act (Full Workflow Simulation)
 
 ```bash
-# Run tests directly (requires bash, coreutils, xxd)
-bash tests/run-local-tests.sh
+# Install act
+brew install act
 
-# Run full workflow with nektos/act
+# Run the test workflow
 act push -W tests/test-workflow.yml
 ```
 

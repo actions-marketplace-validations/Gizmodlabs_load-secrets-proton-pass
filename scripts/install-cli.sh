@@ -69,7 +69,8 @@ else
   fi
 fi
 
-# Add to PATH for subsequent steps
+# Add to PATH for subsequent steps and the current step
+export PATH="${INSTALL_DIR}:$PATH"
 echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
 
 # Print installed version

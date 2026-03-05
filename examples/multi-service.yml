@@ -1,0 +1,38 @@
+# Load secrets for multiple services in a single step
+name: Multi-Service Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load all secrets
+        id: secrets
+        uses: gizmodlabs/load-secrets-proton-pass@v1
+        with:
+          account-email: ${{ secrets.PROTON_ACCOUNT_EMAIL }}
+          proton-password: ${{ secrets.PROTON_PASS_PASSWORD }}
+          export-env: true
+        env:
+          # Database
+          DB_HOST: "pass://Production/Database/host"
+          DB_PASSWORD: "pass://Production/Database/password"
+          # Stripe
+          STRIPE_SECRET_KEY: "pass://Production/Stripe/secret_key"
+          STRIPE_WEBHOOK_SECRET: "pass://Production/Stripe/webhook_secret"
+          # AWS
+          AWS_ACCESS_KEY_ID: "pass://Production/AWS/access_key_id"
+          AWS_SECRET_ACCESS_KEY: "pass://Production/AWS/secret_access_key"
+          # SendGrid
+          SENDGRID_API_KEY: "pass://Production/SendGrid/api_key"
+
+      - name: Deploy backend
+        run: ./deploy-backend.sh
+
+      - name: Deploy workers
+        run: ./deploy-workers.sh

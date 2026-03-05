@@ -1,0 +1,37 @@
+# Inject secrets into a .env template file
+#
+# Template file (.env.production.template):
+#   DB_HOST=db.example.com
+#   DB_PASSWORD={{ pass://Production/Database/password }}
+#   REDIS_URL={{ pass://Production/Redis/url }}
+#   STATIC_VALUE=no-secret-here
+#
+# Output (.env.production):
+#   DB_HOST=db.example.com
+#   DB_PASSWORD=actual-resolved-password
+#   REDIS_URL=redis://actual-url:6379
+#   STATIC_VALUE=no-secret-here
+
+name: Deploy with Template Injection
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load secrets into template
+        uses: gizmodlabs/load-secrets-proton-pass@v1
+        with:
+          account-email: ${{ secrets.PROTON_ACCOUNT_EMAIL }}
+          proton-password: ${{ secrets.PROTON_PASS_PASSWORD }}
+          env-template: ".env.production.template"
+
+      - name: Deploy with resolved .env
+        run: |
+          cp .env.production ./app/.env
+          ./deploy.sh
