@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)release (e.g. v1.0.1)'
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ ! "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$ref' must match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "name=$ref"             >> "$GITHUB_OUTPUT"
+          echo "major=${ref%%.*}"      >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          fetch-depth: 0
+
+      - name: Package action source
+        id: pack
+        run: |
+          tarball="load-secrets-proton-pass-${{ steps.tag.outputs.name }}.tar.gz"
+          tar --exclude='.git' \
+              --exclude='.github' \
+              --exclude='tests' \
+              --exclude='examples' \
+              --exclude='docs' \
+              --exclude='.env.agent-ci' \
+              -czf "$tarball" \
+              action.yml scripts/ README.md LICENSE CLAUDE.md
+          sha256sum "$tarball" | tee "${tarball}.sha256"
+          echo "tarball=$tarball"       >> "$GITHUB_OUTPUT"
+          echo "checksum=${tarball}.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance (sigstore)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.pack.outputs.tarball }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.tag.outputs.name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ steps.tag.outputs.name }}" \
+            --generate-notes \
+            --verify-tag \
+            "${{ steps.pack.outputs.tarball }}" \
+            "${{ steps.pack.outputs.checksum }}"
+
+      - name: Move floating major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          major="${{ steps.tag.outputs.major }}"
+          target="${{ steps.tag.outputs.name }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$major" "$target"
+          git push origin "$major" --force
