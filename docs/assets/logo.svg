@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Load Secrets from Proton Pass logo</title>
+  <desc id="desc">A purple rounded-square icon showing a lock folder with a checklist card.</desc>
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#35206b"/>
+      <stop offset="58%" stop-color="#24124d"/>
+      <stop offset="100%" stop-color="#190b37"/>
+    </radialGradient>
+    <linearGradient id="folderFill" x1="278" y1="701" x2="746" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7566ff"/>
+      <stop offset="55%" stop-color="#b667f0"/>
+      <stop offset="100%" stop-color="#de78f3"/>
+    </linearGradient>
+    <linearGradient id="cardFill" x1="341" y1="255" x2="681" y2="493" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f3f0f7"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#110627" flood-opacity="0.24"/>
+    </filter>
+    <filter id="innerShade" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#12052d" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="0" fill="#fbfafc"/>
+  <rect x="132" y="128" width="760" height="768" rx="116" fill="url(#bgGlow)" filter="url(#softShadow)"/>
+  <path fill="url(#cardFill)" filter="url(#innerShade)" d="M349 255h326c41 0 74 33 74 74v172c0 18-15 33-33 33H308c-18 0-33-15-33-33V329c0-41 33-74 74-74Z"/>
+  <circle cx="409" cy="325" r="14" fill="#251151"/>
+  <circle cx="409" cy="388" r="14" fill="#251151"/>
+  <circle cx="409" cy="451" r="14" fill="#251151"/>
+  <rect x="456" y="317" width="171" height="18" rx="9" fill="#251151"/>
+  <rect x="456" y="380" width="171" height="18" rx="9" fill="#251151"/>
+  <rect x="456" y="443" width="171" height="18" rx="9" fill="#251151"/>
+  <path fill="url(#folderFill)" filter="url(#softShadow)" d="M287 416c0-31 25-56 56-56h13v67c0 25 20 45 45 45h222c25 0 45-20 45-45v-67h13c31 0 56 25 56 56v267c0 31-25 56-56 56H343c-31 0-56-25-56-56V416Z"/>
+  <path fill="#251151" d="M512 554c22 0 40 18 40 40 0 15-8 28-20 35l22 84c3 11-5 21-16 21h-52c-11 0-19-10-16-21l22-84c-12-7-20-20-20-35 0-22 18-40 40-40Z"/>
+</svg>

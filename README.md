@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="Load Secrets from Proton Pass logo" width="160">
+</p>
+
 # Load Secrets from Proton Pass
 
 A GitHub Action that loads secrets from [Proton Pass](https://proton.me/pass) vaults into your GitHub Actions workflows using `pass://` URI references.
