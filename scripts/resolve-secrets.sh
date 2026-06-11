@@ -27,7 +27,9 @@ resolve_and_export() {
   local resolved
   echo "  Resolving pass://$vault/$item/$field -> $env_key"
 
-  if ! resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" 2>&1); then
+  # </dev/null: callers run this inside while-read loops; don't let pass-cli
+  # consume the loop's stdin.
+  if ! resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" </dev/null 2>&1); then
     echo "::error::Failed to resolve secret for $env_key (pass://$vault/$item/$field): $resolved"
     case "$resolved" in
       *"vault by name"*|*"Could not find vault"*)
@@ -86,7 +88,7 @@ handle_field_glob() {
   fi
 
   local item_json
-  if ! item_json=$(pass-cli item view "pass://${vault}/${item}" --output json 2>&1); then
+  if ! item_json=$(pass-cli item view "pass://${vault}/${item}" --output json </dev/null 2>&1); then
     echo "::error::Failed to list fields for pass://$vault/$item: $item_json"
     FAILED=$((FAILED + 1))
     return 1
@@ -166,6 +168,11 @@ while IFS='=' read -r key value; do
 
   if [[ "$field" == "*" ]]; then
     handle_field_glob "$key" "$vault" "$item" || true
+  elif [[ "$field" == *"*"* ]]; then
+    # A `*` mixed into a field name would otherwise fail as a literal lookup.
+    echo "::error::Partial wildcards are not supported in the field segment. Got '$value'."
+    echo "::error::  Use pass://Vault/Item/* to load every field, or an exact field name."
+    FAILED=$((FAILED + 1))
   else
     resolve_and_export "$key" "$vault" "$item" "$field" || true
   fi

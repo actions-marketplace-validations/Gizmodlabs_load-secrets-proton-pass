@@ -45,6 +45,14 @@ JSON
 {"title":"collision-item","fields":[{"name":"api-key","value":"a"},{"name":"api_key","value":"b"}]}
 JSON
             ;;
+          *GithubActions/sanitize-item)
+            cat <<'JSON'
+{"title":"sanitize-item","fields":[{"name":"API Key","value":"sanitize-apikey-value"},{"name":"database-name","value":"sanitize-dbname-value"}]}
+JSON
+            ;;
+          *GithubActions/bad-suffix-item)
+            echo '{"title":"bad-suffix-item","fields":[{"name":"---","value":"unreachable"}]}'
+            ;;
           *)
             echo '{"title":"unknown","fields":[]}'
             ;;
@@ -68,6 +76,12 @@ JSON
           ;;
         *GithubActions/multi-field-item/password)
           echo "hunter2"
+          ;;
+        *"GithubActions/sanitize-item/API Key")
+          echo "sanitize-apikey-value"
+          ;;
+        *GithubActions/sanitize-item/database-name)
+          echo "sanitize-dbname-value"
           ;;
         *)
           echo "mock-secret-value"
