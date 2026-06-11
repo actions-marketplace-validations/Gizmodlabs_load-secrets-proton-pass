@@ -29,6 +29,32 @@ jobs:
           path: tests/.output/test-run.log
           if-no-files-found: ignore
 
+  glob-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install mock pass-cli
+        run: |
+          chmod +x tests/mock-pass-cli.sh
+          sudo cp tests/mock-pass-cli.sh /usr/local/bin/pass-cli
+
+      - name: Load secrets via field glob
+        uses: ./
+        with:
+          personal-access-token: "pst_mock::TOKENKEY"
+          pass-cli-version: "1.0.0"
+          mask-values: "false"
+        env:
+          DB: "pass://GithubActions/multi-field-item/*"
+
+      - name: Verify expanded env vars
+        run: |
+          [[ "$DB_HOST" == "db.example.com" ]] || { echo "FAIL: DB_HOST=$DB_HOST"; exit 1; }
+          [[ "$DB_PORT" == "5432" ]] || { echo "FAIL: DB_PORT=$DB_PORT"; exit 1; }
+          [[ "$DB_PASSWORD" == "hunter2" ]] || { echo "FAIL: DB_PASSWORD=$DB_PASSWORD"; exit 1; }
+          echo "Glob expansion verified"
+
   template-action:
     runs-on: ubuntu-latest
     steps:
