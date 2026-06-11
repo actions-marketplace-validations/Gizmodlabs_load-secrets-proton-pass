@@ -141,5 +141,143 @@ grep -q "Template file not found" <<< "$err_out"
 assert_exit_code 0 $? "Error message mentions missing template"
 echo ""
 
+# Test 7: Field glob — expand pass://V/item/* into one env var per field
+echo "Test 7: Field glob happy path"
+: > "$MOCK_ENV"
+env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  DB="pass://GithubActions/multi-field-item/*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh"
+assert_exit_code 0 $? "Field glob resolved"
+grep -q "^DB_HOST<<" "$MOCK_ENV"
+assert_exit_code 0 $? "DB_HOST written"
+grep -q "^DB_PORT<<" "$MOCK_ENV"
+assert_exit_code 0 $? "DB_PORT written"
+grep -q "^DB_PASSWORD<<" "$MOCK_ENV"
+assert_exit_code 0 $? "DB_PASSWORD written"
+grep -q "db.example.com" "$MOCK_ENV"
+assert_exit_code 0 $? "Resolved value present"
+echo ""
+
+# Test 8: Empty match — item with zero fields must fail
+echo "Test 8: Empty field match fails"
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  EMPTY="pass://GithubActions/empty-item/*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Empty glob exits non-zero"
+grep -q "matched zero fields" <<< "$err_out"
+assert_exit_code 0 $? "Error message mentions zero fields"
+echo ""
+
+# Test 9: Collision — two fields sanitize to the same suffix
+echo "Test 9: Collision fails with offending names"
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  X="pass://GithubActions/collision-item/*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Collision exits non-zero"
+grep -q "api-key" <<< "$err_out"
+assert_exit_code 0 $? "Error lists api-key"
+grep -q "api_key" <<< "$err_out"
+assert_exit_code 0 $? "Error lists api_key"
+echo ""
+
+# Test 10: Wildcards rejected in vault and item segments
+echo "Test 10: Vault/item wildcards rejected"
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  BAD="pass://GithubActions/*/password" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Item wildcard exits non-zero"
+grep -q "only supported in the field segment" <<< "$err_out"
+assert_exit_code 0 $? "Error points at supported form"
+
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  BAD="pass://*/item/password" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Vault wildcard exits non-zero"
+grep -q "only supported in the field segment" <<< "$err_out"
+assert_exit_code 0 $? "Vault wildcard error points at supported form"
+echo ""
+
+# Test 11: Sanitization — mixed-case/space/dash field names map to clean suffixes
+echo "Test 11: Field-name sanitization"
+: > "$MOCK_ENV"
+env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  CFG="pass://GithubActions/sanitize-item/*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh"
+assert_exit_code 0 $? "Sanitize glob resolved"
+grep -q "^CFG_API_KEY<<" "$MOCK_ENV"
+assert_exit_code 0 $? "'API Key' -> CFG_API_KEY"
+grep -q "^CFG_DATABASE_NAME<<" "$MOCK_ENV"
+assert_exit_code 0 $? "'database-name' -> CFG_DATABASE_NAME"
+grep -q "sanitize-apikey-value" "$MOCK_ENV"
+assert_exit_code 0 $? "'API Key' value resolved"
+echo ""
+
+# Test 12: Glob masking — every expanded value gets its own ::add-mask::
+echo "Test 12: Glob masking emits add-mask per value"
+: > "$MOCK_ENV"
+out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  DB="pass://GithubActions/multi-field-item/*" \
+  MASK_VALUES="true" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh")
+assert_exit_code 0 $? "Masked glob resolved"
+grep -q "::add-mask::hunter2" <<< "$out"
+assert_exit_code 0 $? "password value masked"
+grep -q "::add-mask::db.example.com" <<< "$out"
+assert_exit_code 0 $? "host value masked"
+grep -q "^DB_PASSWORD<<" "$MOCK_ENV"
+assert_exit_code 0 $? "DB_PASSWORD still written when masking"
+echo ""
+
+# Test 13: Glob and single URI coexist in one run
+echo "Test 13: Glob and single URI in one run"
+: > "$MOCK_ENV"
+env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  DB="pass://GithubActions/multi-field-item/*" \
+  PASSWORD="pass://GithubActions/load-secrets-proton-pass-test/Password" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh"
+assert_exit_code 0 $? "Mixed run resolved"
+grep -q "^DB_HOST<<" "$MOCK_ENV"
+assert_exit_code 0 $? "Glob var written"
+grep -q "^PASSWORD<<" "$MOCK_ENV"
+assert_exit_code 0 $? "Single var written"
+grep -q "mock-real-password" "$MOCK_ENV"
+assert_exit_code 0 $? "Single value resolved"
+echo ""
+
+# Test 14: Field name that sanitizes to an empty suffix must fail
+echo "Test 14: Empty-suffix field name fails"
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  BAD="pass://GithubActions/bad-suffix-item/*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Empty suffix exits non-zero"
+grep -q "sanitizes to an empty suffix" <<< "$err_out"
+assert_exit_code 0 $? "Error mentions empty suffix"
+echo ""
+
+# Test 15: Partial wildcard in field segment rejected with clear error
+echo "Test 15: Partial field wildcard rejected"
+: > "$MOCK_ENV"
+err_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  BAD="pass://GithubActions/multi-field-item/pass*" \
+  MASK_VALUES="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Partial wildcard exits non-zero"
+grep -q "Partial wildcards are not supported" <<< "$err_out"
+assert_exit_code 0 $? "Error mentions partial wildcard"
+echo ""
+
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]] || exit 1
