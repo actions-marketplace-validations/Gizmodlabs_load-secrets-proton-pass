@@ -3,13 +3,49 @@ set -euo pipefail
 
 PASS_URI_PATTERN="^pass://(.+)/(.+)/(.+)$"
 RESOLVED_COUNT=0
-FAILED=0
+STRICT="${STRICT:-true}"
+FAILURES=()
+
+# Failures annotate as errors in strict mode, warnings in best-effort mode
+ANNOTATE="error"
+[[ "$STRICT" == "true" ]] || ANNOTATE="warning"
+
+# Capture pass-cli stderr separately so a failed command's stdout (potential
+# secret material) is never echoed into the logs
+STDERR_FILE=$(mktemp)
+trap 'rm -f "$STDERR_FILE"' EXIT
 
 # Verify pass-cli is available
 if ! command -v pass-cli &>/dev/null; then
   echo "::error::pass-cli not found in PATH. Ensure the install step completed successfully."
   exit 1
 fi
+
+# Read pass-cli's captured stderr with newlines collapsed to spaces.
+read_stderr() {
+  local detail
+  detail=$(<"$STDERR_FILE")
+  printf '%s' "${detail//$'\n'/ }"
+}
+
+print_hints() {
+  local detail="$1" vault="$2" item="$3" field="$4"
+  case "$detail" in
+    *"vault by name"*|*"Could not find vault"*)
+      echo "::${ANNOTATE}::Hint: the PAT does not have access to vault '$vault'."
+      echo "::${ANNOTATE}::  Check current scope: pass-cli pat access list-access --pat-name <YOUR-PAT-NAME>"
+      echo "::${ANNOTATE}::  Grant access:        pass-cli pat access grant --pat-name <YOUR-PAT-NAME> --vault-name '$vault' --role viewer"
+      ;;
+    *"item by name"*|*"Could not find item"*)
+      echo "::${ANNOTATE}::Hint: item '$item' was not found in vault '$vault'. List exact names with:"
+      echo "::${ANNOTATE}::  pass-cli item list '$vault'"
+      ;;
+    *"Could not find field"*|*"finding field"*)
+      echo "::${ANNOTATE}::Hint: field '$field' was not found on item '$item'. See available fields with:"
+      echo "::${ANNOTATE}::  pass-cli item view \"pass://$vault/$item\""
+      ;;
+  esac
+}
 
 # Sanitize a field name into an uppercase env-var suffix.
 # Non-alphanumeric -> _, runs collapsed, leading/trailing _ stripped, uppercased.
@@ -21,32 +57,19 @@ sanitize_suffix() {
 }
 
 # Run pass-cli item view for one (vault, item, field) and append to GITHUB_ENV.
-# Updates RESOLVED_COUNT / FAILED in the caller's scope.
+# Updates RESOLVED_COUNT / FAILURES in the caller's scope.
 resolve_and_export() {
   local env_key="$1" vault="$2" item="$3" field="$4"
-  local resolved
+  local resolved error_detail
   echo "  Resolving pass://$vault/$item/$field -> $env_key"
 
   # </dev/null: callers run this inside while-read loops; don't let pass-cli
   # consume the loop's stdin.
-  if ! resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" </dev/null 2>&1); then
-    echo "::error::Failed to resolve secret for $env_key (pass://$vault/$item/$field): $resolved"
-    case "$resolved" in
-      *"vault by name"*|*"Could not find vault"*)
-        echo "::error::Hint: the PAT does not have access to vault '$vault'."
-        echo "::error::  Check current scope: pass-cli pat access list-access --pat-name <YOUR-PAT-NAME>"
-        echo "::error::  Grant access:        pass-cli pat access grant --pat-name <YOUR-PAT-NAME> --vault-name '$vault' --role viewer"
-        ;;
-      *"item by name"*|*"Could not find item"*)
-        echo "::error::Hint: item '$item' was not found in vault '$vault'. List exact names with:"
-        echo "::error::  pass-cli item list '$vault'"
-        ;;
-      *"Could not find field"*|*"finding field"*)
-        echo "::error::Hint: field '$field' was not found on item '$item'. See available fields with:"
-        echo "::error::  pass-cli item view \"pass://$vault/$item\""
-        ;;
-    esac
-    FAILED=$((FAILED + 1))
+  if ! resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" </dev/null 2>"$STDERR_FILE"); then
+    error_detail=$(read_stderr)
+    echo "::${ANNOTATE}::Failed to resolve secret for $env_key (pass://$vault/$item/$field): $error_detail"
+    print_hints "$error_detail" "$vault" "$item" "$field"
+    FAILURES+=("$env_key -> pass://$vault/$item/$field ($error_detail)")
     return 1
   fi
 
@@ -80,17 +103,18 @@ handle_field_glob() {
   local env_key="$1" vault="$2" item="$3"
 
   if ! command -v jq &>/dev/null; then
-    echo "::error::jq is required to expand glob URIs but was not found in PATH."
-    echo "::error::  Install on ubuntu: sudo apt-get install -y jq"
-    echo "::error::  Install on macOS:  brew install jq"
-    FAILED=$((FAILED + 1))
+    echo "::${ANNOTATE}::jq is required to expand glob URIs but was not found in PATH."
+    echo "::${ANNOTATE}::  Install on ubuntu: sudo apt-get install -y jq"
+    echo "::${ANNOTATE}::  Install on macOS:  brew install jq"
+    FAILURES+=("$env_key -> pass://$vault/$item/* (jq not found in PATH)")
     return 1
   fi
 
-  local item_json
-  if ! item_json=$(pass-cli item view "pass://${vault}/${item}" --output json </dev/null 2>&1); then
-    echo "::error::Failed to list fields for pass://$vault/$item: $item_json"
-    FAILED=$((FAILED + 1))
+  local item_json error_detail
+  if ! item_json=$(pass-cli item view "pass://${vault}/${item}" --output json </dev/null 2>"$STDERR_FILE"); then
+    error_detail=$(read_stderr)
+    echo "::${ANNOTATE}::Failed to list fields for pass://$vault/$item: $error_detail"
+    FAILURES+=("$env_key -> pass://$vault/$item/* ($error_detail)")
     return 1
   fi
 
@@ -98,8 +122,8 @@ handle_field_glob() {
   field_names=$(extract_field_names "$item_json")
 
   if [[ -z "$field_names" ]]; then
-    echo "::error::Glob pass://$vault/$item/* matched zero fields on item '$item' in vault '$vault'"
-    FAILED=$((FAILED + 1))
+    echo "::${ANNOTATE}::Glob pass://$vault/$item/* matched zero fields on item '$item' in vault '$vault'"
+    FAILURES+=("$env_key -> pass://$vault/$item/* (matched zero fields)")
     return 1
   fi
 
@@ -111,8 +135,8 @@ handle_field_glob() {
     local sanitized
     sanitized=$(sanitize_suffix "$field_name")
     if [[ -z "$sanitized" ]]; then
-      echo "::error::Field name '$field_name' on item '$item' sanitizes to an empty suffix; rename the field or use an explicit pass:// URI."
-      FAILED=$((FAILED + 1))
+      echo "::${ANNOTATE}::Field name '$field_name' on item '$item' sanitizes to an empty suffix; rename the field or use an explicit pass:// URI."
+      FAILURES+=("$env_key -> pass://$vault/$item/* (field '$field_name' sanitizes to an empty suffix)")
       rm -f "$pairs_file"
       return 1
     fi
@@ -123,14 +147,14 @@ handle_field_glob() {
   local collisions
   collisions=$(cut -f1 "$pairs_file" | sort | uniq -d)
   if [[ -n "$collisions" ]]; then
-    echo "::error::Field-name collision while expanding pass://$vault/$item/*: multiple fields sanitize to the same env-var suffix."
+    echo "::${ANNOTATE}::Field-name collision while expanding pass://$vault/$item/*: multiple fields sanitize to the same env-var suffix."
     while IFS= read -r dup; do
       local raw_names
       raw_names=$(awk -F'\t' -v k="$dup" '$1==k {print $2}' "$pairs_file" | paste -sd ',' -)
-      echo "::error::  ${env_key}_${dup} <- ${raw_names}"
+      echo "::${ANNOTATE}::  ${env_key}_${dup} <- ${raw_names}"
     done <<< "$collisions"
-    echo "::error::Rename the offending fields or replace the glob with explicit pass:// URIs."
-    FAILED=$((FAILED + 1))
+    echo "::${ANNOTATE}::Rename the offending fields or replace the glob with explicit pass:// URIs."
+    FAILURES+=("$env_key -> pass://$vault/$item/* (field-name collision)")
     rm -f "$pairs_file"
     return 1
   fi
@@ -159,9 +183,9 @@ while IFS='=' read -r key value; do
 
   # Reject wildcards in vault or item segments; only field segment may be `*`.
   if [[ "$vault" == *"*"* || "$item" == *"*"* ]]; then
-    echo "::error::Wildcards are only supported in the field segment. Got '$value'."
-    echo "::error::  Supported form: pass://Vault/Item/*"
-    FAILED=$((FAILED + 1))
+    echo "::${ANNOTATE}::Wildcards are only supported in the field segment. Got '$value'."
+    echo "::${ANNOTATE}::  Supported form: pass://Vault/Item/*"
+    FAILURES+=("$key -> $value (wildcards only supported in the field segment)")
     echo "::endgroup::"
     continue
   fi
@@ -170,9 +194,9 @@ while IFS='=' read -r key value; do
     handle_field_glob "$key" "$vault" "$item" || true
   elif [[ "$field" == *"*"* ]]; then
     # A `*` mixed into a field name would otherwise fail as a literal lookup.
-    echo "::error::Partial wildcards are not supported in the field segment. Got '$value'."
-    echo "::error::  Use pass://Vault/Item/* to load every field, or an exact field name."
-    FAILED=$((FAILED + 1))
+    echo "::${ANNOTATE}::Partial wildcards are not supported in the field segment. Got '$value'."
+    echo "::${ANNOTATE}::  Use pass://Vault/Item/* to load every field, or an exact field name."
+    FAILURES+=("$key -> $value (partial wildcards not supported)")
   else
     resolve_and_export "$key" "$vault" "$item" "$field" || true
   fi
@@ -180,9 +204,15 @@ while IFS='=' read -r key value; do
   echo "::endgroup::"
 done < <(env)
 
-if [[ "$FAILED" -gt 0 ]]; then
-  echo "::error::Failed to resolve $FAILED secret(s)"
-  exit 1
+if [[ ${#FAILURES[@]} -gt 0 ]]; then
+  echo "::${ANNOTATE}::Failed to resolve ${#FAILURES[@]} secret(s):"
+  for failure in "${FAILURES[@]}"; do
+    echo "::${ANNOTATE}::  $failure"
+  done
+  if [[ "$STRICT" == "true" ]]; then
+    exit 1
+  fi
+  echo "Continuing despite ${#FAILURES[@]} unresolved secret(s) (strict=false)"
 fi
 
 echo "Resolved $RESOLVED_COUNT secret(s) from Proton Pass"

@@ -279,5 +279,57 @@ grep -q "Partial wildcards are not supported" <<< "$err_out"
 assert_exit_code 0 $? "Error mentions partial wildcard"
 echo ""
 
+# Test 16: Strict mode (default) — unresolved URI fails the step with a report
+echo "Test 16: Strict mode failure on missing item"
+: > "$MOCK_ENV"
+strict_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  GOOD_SECRET="pass://GithubActions/load-secrets-proton-pass-test/Password" \
+  BOGUS="pass://Prod/Does-Not-Exist/x" \
+  MASK_VALUES="true" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 1 $rc "Missing item fails step by default"
+rc=0
+grep -q "BOGUS -> pass://Prod/Does-Not-Exist/x" <<< "$strict_out" || rc=$?
+assert_exit_code 0 $rc "Failure report names var and URI"
+rc=0
+grep -q "GOOD_SECRET" "$MOCK_ENV" || rc=$?
+assert_exit_code 0 $rc "Good secret still exported"
+rc=0
+grep -q "BOGUS" "$MOCK_ENV" || rc=$?
+assert_exit_code 1 $rc "Unresolved var not written to GITHUB_ENV"
+rc=0
+grep "::error::" <<< "$strict_out" | grep -q "mock-real-password" || rc=$?
+assert_exit_code 1 $rc "Failure report never contains secret values"
+echo ""
+
+# Test 17: strict=false — best-effort, step succeeds despite missing item
+echo "Test 17: Best-effort mode (strict=false)"
+: > "$MOCK_ENV"
+lax_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  GOOD_SECRET="pass://GithubActions/load-secrets-proton-pass-test/Password" \
+  BOGUS="pass://Prod/Does-Not-Exist/x" \
+  MASK_VALUES="true" STRICT="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 0 $rc "strict=false continues despite failure"
+rc=0
+grep -q "GOOD_SECRET" "$MOCK_ENV" || rc=$?
+assert_exit_code 0 $rc "Good secret exported in best-effort mode"
+rc=0
+grep -q "::warning::" <<< "$lax_out" || rc=$?
+assert_exit_code 0 $rc "Failures reported as warnings in best-effort mode"
+
+# Test 18: strict=false — glob failures also demote to warnings
+echo "Test 18: Best-effort mode covers glob failures"
+: > "$MOCK_ENV"
+lax_glob_out=$(env -i PATH="$PATH" HOME="$HOME" GITHUB_ENV="$MOCK_ENV" \
+  EMPTY="pass://GithubActions/empty-item/*" \
+  MASK_VALUES="false" STRICT="false" \
+  bash "$PROJECT_DIR/scripts/resolve-secrets.sh" 2>&1) && rc=0 || rc=$?
+assert_exit_code 0 $rc "strict=false continues despite empty glob"
+rc=0
+grep -q "::warning::Glob pass://GithubActions/empty-item/\* matched zero fields" <<< "$lax_glob_out" || rc=$?
+assert_exit_code 0 $rc "Empty glob reported as warning"
+echo ""
+
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]] || exit 1

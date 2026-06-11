@@ -83,6 +83,10 @@ JSON
         *GithubActions/sanitize-item/database-name)
           echo "sanitize-dbname-value"
           ;;
+        *Does-Not-Exist*)
+          echo "Error: Could not find item by name 'Does-Not-Exist'" >&2
+          exit 1
+          ;;
         *)
           echo "mock-secret-value"
           ;;
