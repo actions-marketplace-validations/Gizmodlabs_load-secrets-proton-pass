@@ -3,7 +3,36 @@ set -euo pipefail
 
 PASS_URI_PATTERN="^pass://(.+)/(.+)/(.+)$"
 RESOLVED_COUNT=0
-FAILED=0
+STRICT="${STRICT:-true}"
+FAILURES=()
+
+# Failures annotate as errors in strict mode, warnings in best-effort mode
+ANNOTATE="error"
+[[ "$STRICT" == "true" ]] || ANNOTATE="warning"
+
+# Capture pass-cli stderr separately so a failed command's stdout (potential
+# secret material) is never echoed into the logs
+STDERR_FILE=$(mktemp)
+trap 'rm -f "$STDERR_FILE"' EXIT
+
+print_hints() {
+  local detail="$1" vault="$2" item="$3" field="$4"
+  case "$detail" in
+    *"vault by name"*|*"Could not find vault"*)
+      echo "::${ANNOTATE}::Hint: the PAT does not have access to vault '$vault'."
+      echo "::${ANNOTATE}::  Check current scope: pass-cli pat access list-access --pat-name <YOUR-PAT-NAME>"
+      echo "::${ANNOTATE}::  Grant access:        pass-cli pat access grant --pat-name <YOUR-PAT-NAME> --vault-name '$vault' --role viewer"
+      ;;
+    *"item by name"*|*"Could not find item"*)
+      echo "::${ANNOTATE}::Hint: item '$item' was not found in vault '$vault'. List exact names with:"
+      echo "::${ANNOTATE}::  pass-cli item list --vault-name '$vault'"
+      ;;
+    *"Could not find field"*|*"finding field"*)
+      echo "::${ANNOTATE}::Hint: field '$field' was not found on item '$item'. See available fields with:"
+      echo "::${ANNOTATE}::  pass-cli item view \"pass://$vault/$item\""
+      ;;
+  esac
+}
 
 # Verify pass-cli is available
 if ! command -v pass-cli &>/dev/null; then
@@ -28,27 +57,15 @@ while IFS='=' read -r key value; do
   echo "  URI: pass://$vault/$item/$field"
 
   # Resolve using pass-cli item view (accepts pass:// URIs directly)
-  resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" 2>&1) || {
-    echo "::error::Failed to resolve secret for $key (pass://$vault/$item/$field): $resolved"
-    case "$resolved" in
-      *"vault by name"*|*"Could not find vault"*)
-        echo "::error::Hint: the PAT does not have access to vault '$vault'."
-        echo "::error::  Check current scope: pass-cli pat access list-access --pat-name <YOUR-PAT-NAME>"
-        echo "::error::  Grant access:        pass-cli pat access grant --pat-name <YOUR-PAT-NAME> --vault-name '$vault' --role viewer"
-        ;;
-      *"item by name"*|*"Could not find item"*)
-        echo "::error::Hint: item '$item' was not found in vault '$vault'. List exact names with:"
-        echo "::error::  pass-cli item list --vault-name '$vault'"
-        ;;
-      *"Could not find field"*|*"finding field"*)
-        echo "::error::Hint: field '$field' was not found on item '$item'. See available fields with:"
-        echo "::error::  pass-cli item view \"pass://$vault/$item\""
-        ;;
-    esac
-    FAILED=$((FAILED + 1))
+  if ! resolved=$(pass-cli item view "pass://${vault}/${item}/${field}" 2>"$STDERR_FILE"); then
+    error_detail=$(<"$STDERR_FILE")
+    error_detail=${error_detail//$'\n'/ }
+    echo "::${ANNOTATE}::Failed to resolve secret for $key (pass://$vault/$item/$field): $error_detail"
+    print_hints "$error_detail" "$vault" "$item" "$field"
+    FAILURES+=("$key -> pass://$vault/$item/$field ($error_detail)")
     echo "::endgroup::"
     continue
-  }
+  fi
 
   # Mask the value in all subsequent logs
   if [[ "${MASK_VALUES:-true}" == "true" ]]; then
@@ -74,9 +91,15 @@ while IFS='=' read -r key value; do
 
 done < <(env)
 
-if [[ "$FAILED" -gt 0 ]]; then
-  echo "::error::Failed to resolve $FAILED secret(s)"
-  exit 1
+if [[ ${#FAILURES[@]} -gt 0 ]]; then
+  echo "::${ANNOTATE}::Failed to resolve ${#FAILURES[@]} secret(s):"
+  for failure in "${FAILURES[@]}"; do
+    echo "::${ANNOTATE}::  $failure"
+  done
+  if [[ "$STRICT" == "true" ]]; then
+    exit 1
+  fi
+  echo "Continuing despite ${#FAILURES[@]} unresolved secret(s) (strict=false)"
 fi
 
 echo "Resolved $RESOLVED_COUNT secret(s) from Proton Pass"

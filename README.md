@@ -91,6 +91,29 @@ Every `pass://` env var on the action step is resolved and re-exported as a regu
   run: ./migrate.sh   # DB_PASSWORD is in env
 ```
 
+### Unresolved secrets (strict mode)
+
+By default the step fails when any `pass://` URI cannot be resolved, ending with a report that lists every failing variable (names and URIs only — never secret values):
+
+```
+::error::Failed to resolve 1 secret(s):
+::error::  BOGUS -> pass://Prod/Does-Not-Exist/x (Error: Could not find item by name 'Does-Not-Exist')
+```
+
+Keeping `strict: true` (the default) is strongly recommended — a missing secret that silently becomes an empty string tends to surface later as a confusing failure (empty `DB_PASSWORD`, 401s from an empty `API_KEY`) far from the real cause.
+
+If some secrets are genuinely optional, set `strict: false`: failures are reported as warnings, the affected variables are left unset, and the step succeeds:
+
+```yaml
+- name: Load secrets (best effort)
+  uses: gizmodlabs/load-secrets-proton-pass@v1
+  with:
+    personal-access-token: ${{ secrets.PROTON_PASS_PERSONAL_ACCESS_TOKEN }}
+    strict: false
+  env:
+    OPTIONAL_TOKEN: "pass://CI/Optional-Service/token"
+```
+
 ### Template file injection
 
 For applications that read a `.env` file, render one from a template with `{{ pass://vault/item/field }}` placeholders:
@@ -136,6 +159,7 @@ With an explicit output path:
 | `env-template` | No | `''` | Path to a template file with `pass://` references |
 | `pass-cli-version` | No | `2.1.0` | Pinned for reproducibility. Override with `latest` or any version listed at [proton.me/download/pass-cli/versions.json](https://proton.me/download/pass-cli/versions.json) |
 | `mask-values` | No | `true` | Mask resolved values in workflow logs |
+| `strict` | No | `true` | Fail the step when any `pass://` URI cannot be resolved. Set `false` for best-effort mode: failures become warnings and the step continues |
 | `output-path` | No | `''` | Where to write the rendered template. Defaults to stripping `.template`/`.tpl`, else `<input>.resolved`. |
 
 ## Examples

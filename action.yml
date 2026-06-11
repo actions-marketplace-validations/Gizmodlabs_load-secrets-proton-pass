@@ -22,6 +22,10 @@ inputs:
     description: 'Mask resolved secret values in logs'
     required: false
     default: 'true'
+  strict:
+    description: 'Fail the step when any pass:// URI cannot be resolved (default). Set to false for best-effort mode: unresolved URIs are reported as warnings and skipped.'
+    required: false
+    default: 'true'
   output-path:
     description: 'Where to write the rendered template. Defaults to stripping .template/.tpl, else input+.resolved.'
     required: false
@@ -63,6 +67,7 @@ runs:
       env:
         PROTON_PASS_KEY_PROVIDER: fs
         MASK_VALUES: ${{ inputs.mask-values }}
+        STRICT: ${{ inputs.strict }}
 
     - name: Inject Template
       if: inputs.env-template != ''
