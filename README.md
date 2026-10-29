@@ -8,6 +8,8 @@ A GitHub Action that loads secrets from [Proton Pass](https://proton.me/pass) va
 
 Works like [1Password's load-secrets-action](https://github.com/1password/load-secrets-action), but backed by Proton Pass.
 
+Since v1.1.0 the action is TypeScript on the `node24` runtime and runs on ubuntu, macos, and windows GitHub-hosted runners. Upgrading from the bash-based 1.0.0? Nothing to change; see [CHANGELOG.md](CHANGELOG.md) for what is new.
+
 ## Quick Start
 
 ```yaml
@@ -37,8 +39,8 @@ Each `pass://vault/item/field` value is replaced with the real secret and export
 Log in to `pass-cli` on your local machine, then create a scoped, expiring token for CI:
 
 ```bash
-# Create a named token (90-day expiration in this example)
-pass-cli pat create --name "github-actions" --expiration 90d
+# Create a named token (3-month expiration in this example)
+pass-cli pat create --name "github-actions" --expiration 3m
 
 # Grant it read-only access to each vault it should be able to see.
 # IMPORTANT: `pat create` alone gives the token zero vault access — you must
@@ -49,9 +51,9 @@ pass-cli pat access grant --pat-name "github-actions" --vault-name "Production" 
 The `create` command prints the token in the format `pst_xxxx::TOKENKEY`. **Copy it now — it is shown only once.**
 
 Token tips:
-- Scope per-vault with `--role viewer` so the token can read but never write.
-- Use short expirations (`30d`, `90d`) and rotate.
-- Revoke any time with `pass-cli pat delete --name "github-actions"`.
+- Scope per-vault with `--role viewer` so the token can read but never write, or narrow it to one item with `--item-title "DB password"`.
+- Use short expirations and rotate. `--expiration` takes `1h`, `1d`, `1w`, `1m`, `3m`, `6m` or `1y`. `pass-cli pat renew --personal-access-token-name "github-actions" --expiration 3m` issues a new token string (update the GitHub secret; the old one stops working) and keeps its vault access.
+- Revoke any time: `pass-cli pat list` shows the token's ID, then `pass-cli pat delete --pat-id <ID>`.
 
 ### 3. Add the GitHub secret
 
@@ -73,6 +75,8 @@ pass://vault-name/item-name/field-name
 - **item-name** — name of the item in the vault
 - **field-name** — `password`, `username`, or any custom field name
 
+`pass-cli` resolves the reference, so its forms pass straight through: vaults and items by ID instead of name, section-qualified fields (`pass://Work/Deploy Targets/Staging.password`), and TOTP fields, which resolve to the current code (`?totp=uri` returns the stored `otpauth://` URI instead).
+
 ## Usage
 
 ### Environment variables (default)
@@ -89,6 +93,36 @@ Every `pass://` env var on the action step is resolved and re-exported as a regu
 
 - name: Run migrations
   run: ./migrate.sh   # DB_PASSWORD is in env
+```
+
+### Pin the CLI version and hash
+
+```yaml
+- uses: gizmodlabs/load-secrets-proton-pass@v1
+  with:
+    personal-access-token: ${{ secrets.PROTON_PASS_PERSONAL_ACCESS_TOKEN }}
+    pass-cli-version: "2.3.3"
+    hash: "b5b49a8b3fd0af8830c0c1979f28ea0c90ccece73f59023a8bca8245d4b68da9" # linux-x86_64
+  env:
+    DB_PASSWORD: "pass://Production/Database/password"
+```
+
+The hash is per platform. Get it from the release asset
+`https://github.com/protonpass/pass-cli/releases/download/<version>/pass-cli-<platform>[.zip].sha256`.
+Without `hash`, the action fetches that same file and verifies against it.
+
+### Using with `protonpass/install-cli-action`
+
+If `pass-cli` is already on PATH and you leave `pass-cli-version` empty, the action uses it as-is.
+
+```yaml
+- uses: protonpass/install-cli-action@v1
+  with:
+    version: "2.3.3"
+- uses: gizmodlabs/load-secrets-proton-pass@v1
+  env:
+    PROTON_PASS_PERSONAL_ACCESS_TOKEN: ${{ secrets.PROTON_PASS_PERSONAL_ACCESS_TOKEN }}
+    API_KEY: "pass://Production/Stripe/secret-key"
 ```
 
 ### Bulk-load every field on an item (glob URIs)
@@ -113,6 +147,7 @@ Restrictions:
 - Wildcards are only valid in the **field** segment. `pass://Vault/*/field` and `pass://*/item/field` are rejected.
 - An item with zero fields fails the step (a warning instead when `strict: false`).
 - Two field names that sanitize to the same suffix (e.g. `api-key` and `api_key`) fail the step with both raw names listed. Rename the field or use explicit `pass://` URIs.
+- An expanded name that another reference also produces (e.g. `DB: pass://Vault/Item/*` yielding `DB_HOST` next to an explicit `DB_HOST: pass://...`) fails the step, listing every source, instead of letting one silently overwrite the other. Names compare case-insensitively.
 - Adding a new field to a globbed item adds a new env var on the next run. Keep that in mind when sharing vaults across workflows.
 
 ### Unresolved secrets (strict mode)
@@ -175,22 +210,32 @@ With an explicit output path:
     output-path: ".env.production"
 ```
 
+The rendered file replaces any existing file at the output path and is written with mode `0600`. It holds plaintext secrets, so keep it out of uploaded artifacts and caches. Every injected value is masked in the logs, including quoted values, `key: value` lines, and several placeholders on one line.
+
 ## Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `personal-access-token` | Yes | | Proton Pass PAT (`pst_xxxx::TOKENKEY`) |
+| `personal-access-token` | No* | | Proton Pass PAT (`pst_xxxx::TOKENKEY`). *Required unless the step sets the `PROTON_PASS_PERSONAL_ACCESS_TOKEN` env var (upstream-compatible). |
 | `env-template` | No | `''` | Path to a template file with `pass://` references |
-| `pass-cli-version` | No | `2.1.0` | Pinned for reproducibility. Override with `latest` or any version listed at [proton.me/download/pass-cli/versions.json](https://proton.me/download/pass-cli/versions.json) |
+| `pass-cli-version` | No | `''` → `2.3.3` | `MAJOR.MINOR.PATCH` or `latest`. Empty installs the pinned default **or** accepts any `pass-cli` already on PATH (e.g. from `protonpass/install-cli-action`). An explicit version is enforced. Minimum `2.1.2`. |
+| `hash` | No | `''` | Expected SHA-256 of the `pass-cli` download. Empty → fetched from the release's official `.sha256` asset. Always verified. |
+| `platform` | No | auto | `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64`. |
 | `mask-values` | No | `true` | Mask resolved values in workflow logs |
 | `strict` | No | `true` | Fail the step when any `pass://` URI cannot be resolved. Set `false` for best-effort mode: failures become warnings and the step continues |
 | `output-path` | No | `''` | Where to write the rendered template. Defaults to stripping `.template`/`.tpl`, else `<input>.resolved`. |
+| `export-env` | No | `true` | Export resolved secrets as env vars for subsequent steps. Set `false` to consume them only as step outputs. (Upstream `protonpass/load-secret-action` defaults this to `false`; this action defaults to `true` for compatibility with its own earlier releases.) |
+
+Boolean inputs take `true` or `false` in any case. Any other value logs a warning and keeps the default, so a typo can never switch masking or strict mode off.
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
 | `resolved-keys` | Comma-separated, sorted list of env var names the action populated (e.g. `API_KEY,DB_PASSWORD`). Names only — values never appear. Empty string when nothing resolved. |
+| `<NAME>` (per resolved var) | Every resolved variable is also exposed as its own masked step output, e.g. `steps.secrets.outputs.DB_PASSWORD` — including glob-expanded names. |
+
+Resolved values are exactly what is stored in Proton Pass: `pass-cli` prints each value followed by one newline and the action strips exactly that newline. Single-line secrets compare cleanly (`[[ "$DB_PASSWORD" == "..." ]]`), and multi-line values such as SSH keys and PEM certificates keep their own trailing newline.
 
 Use it to gate downstream steps on what was actually loaded, without touching values:
 
@@ -221,34 +266,43 @@ Ready-to-copy workflow files live in [`examples/`](examples/):
 
 ## Local development
 
-The action is bash on top of `pass-cli`. Three commands cover the local loop:
+The action is TypeScript (`src/`) bundled with esbuild into committed `dist/` bundles, on top of `pass-cli`. The local loop:
 
 ```bash
-# 1. Lint
-shellcheck scripts/*.sh tests/*.sh
+npm ci
 
-# 2. Unit tests against the mock pass-cli (no Proton account needed)
-bash tests/run-local-tests.sh
+# Typecheck (TS7 strict, no emit), bundle, and run the full test suite
+npm run build:check
 
-# 3. Full workflow simulation using the official GitHub Actions runner
-npx @redwoodjs/agent-ci run --workflow tests/test-workflow.yml
+# Or individually:
+npm run typecheck   # tsc --noEmit
+npm run lint        # oxlint (typescript-eslint's type-aware rules don't support the TS7 checker yet)
+npm run build       # esbuild → dist/index.js + dist/cleanup.js
+npm test            # node:test — unit + integration against the mock pass-cli (no Proton account needed)
+npm run test:coverage # unit suites with the coverage gate CI enforces
+npm run test:workflow # agent-ci mock workflow using the official Actions runner
+npm run verify      # build check + lint + agent-ci workflow
 ```
 
-[`agent-ci`](https://agent-ci.dev) wraps the official `actions/runner` binary, so what passes locally is what runs in CI.
+CI also lints the workflows with [actionlint](https://github.com/rhysd/actionlint) and [zizmor](https://docs.zizmor.sh); run `actionlint` and `zizmor .github/` locally if you change them. Accepted zizmor exceptions live in `.github/zizmor.yml`.
+
+`dist/` is a committed build artifact — rebuild and commit it with any `src/` change (CI fails on stale `dist/`).
+
+[`@redwoodjs/agent-ci`](https://agent-ci.dev) is pinned at 0.18.1 and wraps the official `actions/runner` binary. It now forwards to Local CI, while preserving the `agent-ci` command used by this repository.
 
 ### Smoke test against a real vault
 
 `tests/test-real.yml` (gitignored) runs the action end-to-end against your own Proton Pass account. Set up:
 
 ```bash
-# 1. Put your PAT in .env.agent-ci (also gitignored) — agent-ci picks up
+# 1. Put your PAT in .env.local-ci (also gitignored) — agent-ci picks up
 #    secrets from this file automatically.
-echo 'PROTON_PASS_PERSONAL_ACCESS_TOKEN=pst_xxxx::TOKENKEY' > .env.agent-ci
+echo 'PROTON_PASS_PERSONAL_ACCESS_TOKEN=pst_xxxx::TOKENKEY' > .env.local-ci
 
 # 2. Edit the pass:// URIs in tests/test-real.yml to point at items you own.
 
 # 3. Run it.
-npx @redwoodjs/agent-ci run --workflow tests/test-real.yml
+npm exec agent-ci run --workflow tests/test-real.yml
 ```
 
 The workflow references the PAT as `${{ secrets.PROTON_PASS_PERSONAL_ACCESS_TOKEN }}`, so the token never lives in the YAML.
@@ -257,6 +311,7 @@ The workflow references the PAT as `${{ secrets.PROTON_PASS_PERSONAL_ACCESS_TOKE
 
 - A [Proton Pass Plus+](https://proton.me/pass) subscription (required for CLI access)
 - The [Proton Pass CLI](https://proton.me/support/pass-cli) — installed automatically on the runner by this action; needed locally only to mint the PAT
+- `pass-cli` 2.1.2 or newer when the action installs it from GitHub Releases
 
 ## Project status
 
@@ -269,7 +324,7 @@ The action is a thin wrapper around Proton's public [`pass-cli`](https://proton.
 Open source under MIT. Contributions welcome — bug reports, fixes, docs, new examples, dependency bumps, anything.
 
 - File issues and feature requests in the [Issues](../../issues) tab.
-- Before opening a PR, run `shellcheck scripts/*.sh tests/*.sh` and `bash tests/run-local-tests.sh` locally. Both should pass.
+- Before opening a PR, run `npm run build:check` locally (typecheck + build + tests) and commit the rebuilt `dist/`.
 - Keep PRs focused; one concern per branch.
 - See [Local development](#local-development) for the full dev loop.
 
